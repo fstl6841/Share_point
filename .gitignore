@@ -1,0 +1,26 @@
+## Systèmes
+.DS_Store
+Thumbs.db
+
+## Environnements
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+## Node
+node_modules/
+npm-debug.log
+
+## IDE
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+## Fichiers temporaires
+*.log
+
+## Git LFS pointer files are allowed; don't ignore
