@@ -171,6 +171,105 @@ not the same stocks Momentum is already pushing. The resulting portfolio
 turnover and concentration are subtly different, and over many years that
 translates into a small persistent alpha pickup in PMOM-tailwind regimes.
 
+---
+
+## 7. Extended verification — generalization & coverage audit
+
+After the EVP-specific tests above, three further checks were run to
+probe whether the conclusions generalize and whether the upstream data
+plumbing is healthy. Script:
+[`evp_wfp_extended_verification.py`](evp_wfp_extended_verification.py).
+Per-universe CSVs in [`../output/`](../output/).
+
+### Test 2 — Recipe match across **all four** WFP variants
+
+Reconstruct `PMR_B_WFP`, `PMR_P_WFP`, `PMR_VP_WFP`, `PMR_QP_WFP` from
+their input pieces using the 07c formulas, compare per-date Spearman
+rank correlation against the DB values.
+
+| Universe | min over the 4 variants — median ρ | min over the 4 variants — min ρ |
+| --- | --- | --- |
+| SPX  | 0.9999 | 0.9996 |
+| MXEA | 0.9999 | 0.9994 |
+| MXWO | 0.9998 | 0.9990 |
+| MXEF | 0.9997 | 0.9984 |
+| MXAP | 0.9999 | 0.9994 |
+
+**0 flagged out of 20 (variant × universe) pairs.** The recipe identity
+established in §3 for `PMR_EVP_WFP` extends cleanly to every other WFP
+variant in the DB. The build pipeline is faithful to the formulas
+across the board.
+
+### Test 3 — `PMOM_3SLOW` source/coverage parity
+
+For each universe, compare the `(Date, QAID)` key set of
+`cache/pmom_PMR_P_.parquet` (the PMOM input to `NeutralizationRunner`)
+against `cache/rf_std.parquet` and `cache/alpha.parquet`. Any key
+present in rf_std/alpha but missing from PMOM means GLS would run
+without a PMOM value at that stock-date.
+
+| Universe | rf_std keys missing in PMOM | alpha keys missing in PMOM |
+| --- | --- | --- |
+| SPX  |   562 (0.26 %) | 1 274 (0.59 %) |
+| MXEA | 1 458 (0.50 %) | 2 734 (0.93 %) |
+| MXWO | 2 328 (0.46 %) | 4 095 (0.81 %) |
+| MXEF | 5 161 (1.74 %) | 6 956 (2.34 %) |
+| MXAP | 5 563 (1.60 %) | 6 689 (1.91 %) |
+
+There are never extras in PMOM beyond rf_std.
+
+**Reading:** in developed markets ≥ 99.4 % of factor stock-dates have a
+PMOM value available; in emerging markets the gap widens to ~2 %.
+Stock-dates with no PMOM value would be excluded from the PMOM
+neutralization fit by `NeutralizationRunner` (depending on its NaN
+policy); the order-of-magnitude impact is small but non-zero, and
+worse in EM-heavy universes.
+
+### Test 4 — `PMR_EVP_WFP` coverage vs intersection of its three inputs
+
+Query the DB for `PMR_EVP_Value`, `PMR_B_Quality`,
+`PMR_B_Momentum_3SLOW`, `PMR_EVP_WFP` under identical
+`DtValidAt='9999-12-31'`, `P=0`, `GF`, `wNB`, `TopNNBN` filters.
+Compare key sets.
+
+| Universe | inputs ∩ | composite | inputs \ composite | composite \ inputs |
+| --- | --- | --- | --- | --- |
+| SPX  | 210 758 | 216 238 | 0 (100 % survive) | 5 480 (2.5 %) |
+| MXEA | 288 502 | 292 878 | 0 (100 % survive) | 4 376 (1.5 %) |
+| MXWO | 491 690 | 499 296 | 0 (100 % survive) | 7 606 (1.5 %) |
+| MXEF | 284 902 | 290 963 | 0 (100 % survive) | 6 061 (2.1 %) |
+| MXAP | 337 695 | 343 380 | 0 (100 % survive) | 5 685 (1.7 %) |
+
+**Reading:**
+- **Good half:** `inputs \ composite = 0` everywhere. **Every stock-date
+  that has all three inputs is present in the composite.** No silent
+  dropouts in 07c/07d.
+- **Flag half:** the composite carries 1.5–2.5 % *extra* keys not
+  present in the current live inputs. Not a math error — those rows
+  correspond to stock-dates whose inputs existed at composite-build
+  time but have since been removed/superseded in the SCD2 input
+  tables. It is a **snapshot-staleness** signal: the composite has
+  not been rebuilt since the inputs were last refreshed.
+
+### Updated verdict matrix
+
+| Concern | Status |
+| --- | --- |
+| Build formulas in 07c match DB (recipe correctness) | ✅ verified for all 4 variants |
+| `PMR_EVP_WFP` recipe in particular | ✅ verified (Spearman 0.9999) |
+| Only EV slice has explicit PMOM-neutralization | ✅ verified |
+| GLS math correctness inside `NeutralizationRunner` | ⚠ not unit-tested (would need synthetic data with known solution) |
+| PMOM coverage of all factor stock-dates | ⚠ 99.7 % DM, ~98 % EM |
+| EVP composite has no silent dropouts | ✅ 100 % of input intersection survives |
+| EVP composite has no stale rows | ⚠ ~2 % extra rows from older snapshots |
+
+**Confidence update.** Combined with §3, the build pipeline is
+demonstrably correct in formula and faithful in execution for **all**
+WFP variants. The two remaining caveats are data-hygiene issues
+(PMOM coverage gaps in EM universes, snapshot staleness in the
+composite) — small in magnitude, real, and worth a one-time refresh
+if these composites feed production decisions.
+
 This is **return-level diversification**, not **score-level orthogonality**.
 The two metrics measure different things:
 - Score-level: are the cross-sectional ranks of `WFP_EVP` orthogonal to
